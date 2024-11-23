@@ -2,18 +2,20 @@ package com.example.transfer.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.transfer.domain.usecase.LoginUseCase
+import com.example.transfer.data.repository.UserRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-class LoginViewModel(private val loginUseCase: LoginUseCase) : ViewModel() {
+class LoginViewModel : ViewModel() {
+    private val loginUseCase = UserRepository() // Instanciamos directamente
+
     private val _loginState = MutableStateFlow<LoginResult>(LoginResult.Idle)
     val loginState: StateFlow<LoginResult> = _loginState
 
     fun login(username: String, password: String) {
         viewModelScope.launch {
-            val result = loginUseCase(username, password)
+            val result = loginUseCase.login(username, password)
             _loginState.value = if (result != null) LoginResult.Success else LoginResult.Error
         }
     }

@@ -13,6 +13,7 @@ import com.example.transfer.data.repository.UserRepository
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
+    val loginViewModel = LoginViewModel()
 
     // Inicializar dependencias
     val userRepository = UserRepository() // Repositorio que implementa IUserRepository

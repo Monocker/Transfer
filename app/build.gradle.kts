@@ -50,6 +50,12 @@ android {
 }
 
 dependencies {
+    implementation ("androidx.navigation:navigation-compose:2.8.4")
+    // Hilt
+    implementation ("com.google.dagger:hilt-android:2.44")
+
+    // Para proyectos Kotlin, también necesitas:
+    implementation ("androidx.hilt:hilt-lifecycle-viewmodel:1.0.0-alpha03")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
