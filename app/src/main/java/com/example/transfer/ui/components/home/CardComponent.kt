@@ -2,6 +2,7 @@ package com.example.transfer.components.home
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -14,20 +15,21 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.transfer.R
 
 @Composable
 fun CardComponent(
     imageRes: Int,
     title: String,
     location: String,
-    price: String
+    price: String,
+    onClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(8.dp)
             .background(MaterialTheme.colorScheme.surface)
+            .clickable { onClick() }
     ) {
         Image(
             painter = painterResource(id = imageRes),
