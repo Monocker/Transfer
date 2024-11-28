@@ -9,6 +9,7 @@ import androidx.navigation.navArgument
 import com.example.transfer.ui.screens.DetailScreen
 import com.example.transfer.ui.screens.HomeScreen
 import com.example.transfer.ui.screens.LoginScreen
+import com.example.transfer.ui.screens.SeatSelectionScreen
 import com.example.transfer.viewmodel.LoginViewModel
 
 @Composable
@@ -17,18 +18,30 @@ fun AppNavigation() {
     val loginViewModel = LoginViewModel()
 
     NavHost(navController = navController, startDestination = "login") {
+        // Pantalla de Login
         composable("login") {
             LoginScreen(viewModel = loginViewModel) {
                 navController.navigate("home")
             }
         }
+
+        // Pantalla de Inicio (Home)
         composable("home") {
-            HomeScreen(onCardClick = { title, imageRes, recommendations ->
-                navController.navigate("detail/$title/$imageRes/$recommendations")
-            })
+            HomeScreen(navController = navController)
         }
+
+        // Pantalla de Selección de Asientos
         composable(
-            "detail/{title}/{imageRes}/{recommendations}",
+            route = "seat_selection/{tripTitle}",
+            arguments = listOf(navArgument("tripTitle") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val tripTitle = backStackEntry.arguments?.getString("tripTitle") ?: ""
+            SeatSelectionScreen(navController = navController, tripTitle = tripTitle)
+        }
+
+        // Pantalla de Detalles (opcional)
+        composable(
+            route = "detail/{title}/{imageRes}/{recommendations}",
             arguments = listOf(
                 navArgument("title") { type = NavType.StringType },
                 navArgument("imageRes") { type = NavType.IntType },

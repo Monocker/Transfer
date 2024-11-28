@@ -57,7 +57,12 @@ dependencies {
     // Para proyectos Kotlin, también necesitas:
     implementation ("androidx.hilt:hilt-lifecycle-viewmodel:1.0.0-alpha03")
     //Iconos
-    implementation ("androidx.compose.material:material-icons-extended:1.5.1")
+    implementation ("androidx.compose.material:material-icons-extended:1.7.5")
+    //EXTENCIONES
+    implementation ("androidx.compose.material3:material3:1.2.0-alpha01")
+    implementation ("androidx.compose.foundation:foundation:1.2.0")
+
+
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
