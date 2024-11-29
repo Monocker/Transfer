@@ -1,6 +1,8 @@
 package com.example.transfer.ui.screens
 
 import android.app.DatePickerDialog
+import android.content.Context
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -9,71 +11,126 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
-import com.example.transfer.R
 import com.example.transfer.components.home.CardComponent
+import com.example.transfer.viewmodel.ReservationViewModel
 import java.util.*
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(navController: NavHostController) {
+fun HomeScreen(navController: NavHostController, viewModel: ReservationViewModel) {
+    // Obtén el contexto
+    val context = LocalContext.current
+
+    // Si quieres mantener el `LaunchedEffect` inicial para cargar una sola vez:
+    LaunchedEffect(Unit) {
+        viewModel.loadReservationsFromPreferences(
+            context.getSharedPreferences("ReservationPrefs", Context.MODE_PRIVATE)
+        )
+    }
+
+
     var selectedZone by remember { mutableStateOf<String?>(null) }
     var selectedAgency by remember { mutableStateOf<String?>(null) }
     var hotels by remember { mutableStateOf(listOf<String>()) }
     var selectedHotel by remember { mutableStateOf<String?>(null) }
     var selectedStore by remember { mutableStateOf<String?>(null) }
-    val fixedTime = "11:30 AM"
+    var selectedModel by remember { mutableStateOf<String?>(null) }
+    var pickUpTime by remember { mutableStateOf("11:30 AM") }
     var date by remember { mutableStateOf("") }
-    var adults by remember { mutableStateOf(0) }
-    var children by remember { mutableStateOf(0) }
-    var clientName by remember { mutableStateOf("") } // Campo para Nombre y Apellido del Cliente
+    var pax by remember { mutableStateOf("") }
+    var adults by remember { mutableStateOf("") }
+    var children by remember { mutableStateOf("") }
+    var clientName by remember { mutableStateOf("") }
 
-    // Lista de transferencias (filtradas dinámicamente)
-    val allTransfers = listOf(
-        TransferData("PRIVATE TRANSFER", "Cancún", 12, 12),
-        TransferData("VIP TRANSFER", "Puerto Morelos", 8, 8),
-        TransferData("SHARED TRANSFER", "Playa del Carmen", 15, 15),
-        TransferData("LUXURY TRANSFER", "Cancún", 5, 5),
-        TransferData("FAMILY TRANSFER", "Playa del Carmen", 10, 10)
+    // Mapeo de hoteles con sus horarios de Pick-Up
+    val hotelPickUpTimes = mapOf(
+        "Hotel A" to "9:00 AM",
+        "Hotel B" to "11:00 AM",
+        "Hotel C" to "12:00 PM"
     )
 
-    val filteredTransfers = allTransfers.filter { transfer ->
-        (selectedZone == null || transfer.location == selectedZone) &&
-                (adults + children <= transfer.availableSeats)
+    // Generar transferencias iniciales (3 tarjetas por zona y modelo)
+    val initialTransfers = remember {
+        mutableStateListOf(
+            TransferData("Van", "Cancún", 15, 15, 0),
+            TransferData("Transit", "Cancún", 12, 12, 0),
+            TransferData("Rifter", "Cancún", 10, 10, 0),
+            TransferData("Van", "Puerto Morelos", 15, 15, 0),
+            TransferData("Transit", "Puerto Morelos", 12, 12, 0),
+            TransferData("Rifter", "Puerto Morelos", 10, 10, 0),
+            TransferData("Van", "Rivera Maya", 15, 15, 0),
+            TransferData("Transit", "Rivera Maya", 12, 12, 0),
+            TransferData("Rifter", "Rivera Maya", 10, 10, 0)
+        )
     }
 
-    val context = LocalContext.current
+    // Observa las reservas desde el ViewModel
+    val reservations = viewModel.reservations
+
+    val updatedTransfers by remember(reservations) {
+        derivedStateOf {
+            initialTransfers.map { transfer ->
+                val matchingReservation = reservations.find { reservation ->
+                    reservation.title == transfer.title && reservation.zone == transfer.location
+                }
+                if (matchingReservation != null) {
+                    Log.d(
+                        "HomeScreen",
+                        "Matching reservation found: ${matchingReservation.title} (${matchingReservation.zone}), " +
+                                "Available: ${matchingReservation.availableSeats}, Reserved: ${matchingReservation.reservedSeats}"
+                    )
+                    transfer.copy(
+                        availableSeats = matchingReservation.availableSeats,
+                        reservedSeats = matchingReservation.reservedSeats
+                    )
+                } else {
+                    Log.d(
+                        "HomeScreen",
+                        "No matching reservation for: ${transfer.title} in ${transfer.location}"
+                    )
+                    transfer
+                }
+            }
+        }
+    }
+
+// Filtrar transferencias dinámicamente
+    val filteredTransfers = updatedTransfers.filter { transfer ->
+        (selectedModel == null || transfer.title == selectedModel) &&
+                (selectedZone == null || transfer.location == selectedZone) &&
+                transfer.availableSeats > 0
+    }
+
+
+
     val calendar = Calendar.getInstance()
     val year = calendar.get(Calendar.YEAR)
     val month = calendar.get(Calendar.MONTH)
     val day = calendar.get(Calendar.DAY_OF_MONTH)
 
-    Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-        // Filtros organizados en un diseño responsivo
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             FilterDropdown(
                 label = "Zona",
-                options = listOf("Cancún", "Puerto Morelos", "Playa del Carmen"),
+                options = listOf("Cancún", "Puerto Morelos", "Rivera Maya"),
                 selectedOption = selectedZone,
                 onOptionSelected = { zone ->
                     selectedZone = zone
                     selectedAgency = null
-                    selectedStore = null
-                    hotels = getHotelsForZone(zone)
                     selectedHotel = null
+                    hotels = getHotelsForZone(zone)
                 },
-                modifier = Modifier.weight(1f) // Para asegurar proporciones
+                modifier = Modifier.weight(1f)
             )
 
             if (selectedZone != null) {
@@ -81,11 +138,7 @@ fun HomeScreen(navController: NavHostController) {
                     label = "Agencia",
                     options = listOf("Agencia 1", "Agencia 2", "Agencia 3"),
                     selectedOption = selectedAgency,
-                    onOptionSelected = { agency ->
-                        selectedAgency = agency
-                        selectedHotel = null
-                        selectedStore = null
-                    },
+                    onOptionSelected = { agency -> selectedAgency = agency },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -97,6 +150,7 @@ fun HomeScreen(navController: NavHostController) {
                     selectedOption = selectedHotel,
                     onOptionSelected = { hotel ->
                         selectedHotel = hotel
+                        pickUpTime = hotelPickUpTimes[hotel] ?: "11:30 AM"
                     },
                     modifier = Modifier.weight(1f)
                 )
@@ -107,24 +161,20 @@ fun HomeScreen(navController: NavHostController) {
                     label = "Tienda",
                     options = listOf("Tienda 1", "Tienda 2", "Tienda 3"),
                     selectedOption = selectedStore,
-                    onOptionSelected = { store ->
-                        selectedStore = store
-                    },
+                    onOptionSelected = { store -> selectedStore = store },
                     modifier = Modifier.weight(1f)
                 )
             }
         }
 
-
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Pick Up y Fecha en una fila horizontal
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             OutlinedTextField(
-                value = fixedTime,
+                value = pickUpTime,
                 onValueChange = {},
                 label = { Text("Pick Up", fontWeight = FontWeight.Bold) },
                 readOnly = true,
@@ -144,12 +194,18 @@ fun HomeScreen(navController: NavHostController) {
                         DatePickerDialog(
                             context,
                             { _, selectedYear, selectedMonth, selectedDay ->
-                                date = "$selectedDay/${selectedMonth + 1}/$selectedYear"
+                                if (Calendar.getInstance().apply {
+                                        set(selectedYear, selectedMonth, selectedDay)
+                                    }.after(calendar)) {
+                                    date = "$selectedDay/${selectedMonth + 1}/$selectedYear"
+                                }
                             },
                             year,
                             month,
                             day
-                        ).show()
+                        ).apply {
+                            datePicker.minDate = calendar.timeInMillis + 24 * 60 * 60 * 1000 // Solo fechas futuras
+                        }.show()
                     }
             ) {
                 OutlinedTextField(
@@ -159,50 +215,58 @@ fun HomeScreen(navController: NavHostController) {
                     readOnly = true,
                     enabled = false,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = TextFieldDefaults.outlinedTextFieldColors(
-                        disabledTextColor = Color.Black,
-                        disabledBorderColor = Color.Black,
-                        disabledLabelColor = Color.Black
-                    )
+                )
+            }
+
+            if (selectedZone != null) {
+                FilterDropdown(
+                    label = "Modelo",
+                    options = listOf("Van", "Transit", "Rifter"),
+                    selectedOption = selectedModel,
+                    onOptionSelected = { model -> selectedModel = model },
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Campos para Pax, Adultos y Menores
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             PaxInputField(
+                label = "Pax",
+                value = pax,
+                onValueChange = { pax = it.toString() },
+                modifier = Modifier.weight(1f)
+            )
+            PaxInputField(
                 label = "Adultos",
                 value = adults,
-                onValueChange = { adults = it },
-                modifier = Modifier.weight(1f) // Distribuye el ancho equitativamente
+                onValueChange = { adults = it.toString() },
+                modifier = Modifier.weight(1f)
             )
             PaxInputField(
                 label = "Menores",
                 value = children,
-                onValueChange = { children = it },
-                modifier = Modifier.weight(1f) // Distribuye el ancho equitativamente
+                onValueChange = { children = it.toString() },
+                modifier = Modifier.weight(1f)
             )
         }
 
-
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Campo para Nombre y Apellido del Cliente
         OutlinedTextField(
             value = clientName,
             onValueChange = { clientName = it },
-            label = { Text("Nombre y Apellido del Cliente") },
+            label = { Text("Nombre del Cliente") },
             modifier = Modifier.fillMaxWidth()
         )
 
         Spacer(modifier = Modifier.height(16.dp))
+        Log.d("HomeScreen", "Updated Transfers: $updatedTransfers")
 
-        // Lista de transfers filtrados
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(8.dp),
@@ -210,22 +274,27 @@ fun HomeScreen(navController: NavHostController) {
         ) {
             items(filteredTransfers) { transfer ->
                 CardComponent(
-                    imageRes = R.drawable.bus_image,
                     title = transfer.title,
-                    location = transfer.location,
-                    price = "${transfer.price} USD",
-                    description = "Asientos disponibles: ${transfer.availableSeats}",
+                    zone = transfer.location,
+                    totalSeats = transfer.totalSeats,
+                    availableSeats = transfer.availableSeats,
+                    reservedSeats = transfer.reservedSeats,
                     onClick = {
-                        navController.navigate("seat_selection/${transfer.title}")
+                        navController.navigate("seat_selection/${transfer.title}/${transfer.location}/${transfer.totalSeats}")
                     }
                 )
             }
         }
+
+
     }
 }
 
 
 
+
+
+// Dropdown Component
 @Composable
 fun FilterDropdown(
     label: String,
@@ -236,19 +305,17 @@ fun FilterDropdown(
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-    Column(modifier = modifier.width(150.dp)) { // Ancho fijo para todas las cajas
-        Text(text = label, fontSize = 14.sp, color = Color.Black)
+    Column(modifier = modifier) {
+        Text(text = label, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Box(
             modifier = Modifier
-                .background(Color.LightGray, shape = RoundedCornerShape(8.dp))
-                .clickable { expanded = !expanded }
+                .background(Color.Gray, RoundedCornerShape(8.dp))
+                .clickable { expanded = true }
                 .padding(8.dp)
         ) {
             Text(
                 text = selectedOption ?: "Seleccionar $label",
-                color = Color.Black,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis // Muestra puntos suspensivos si el texto es largo
+                color = Color.White
             )
         }
 
@@ -257,26 +324,14 @@ fun FilterDropdown(
             onDismissRequest = { expanded = false }
         ) {
             options.forEach { option ->
-                DropdownMenuItem(
-                    onClick = {
-                        onOptionSelected(option)
-                        expanded = false
-                    },
-                    text = {
-                        Text(
-                            text = option,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis // Asegura que los textos largos también se trunquen aquí
-                        )
-                    }
-                )
+                DropdownMenuItem(onClick = {
+                    expanded = false
+                    onOptionSelected(option)
+                }, text = { Text(option) })
             }
         }
     }
 }
-
-
-
 
 
 @Composable
@@ -316,7 +371,7 @@ fun PassengerDetails(
     }
 }
 @Composable
-fun PaxInputField(label: String, value: Int, onValueChange: (Int) -> Unit, modifier: Modifier = Modifier) {
+fun PaxInputField(label: String, value: String, onValueChange: (Int) -> Unit, modifier: Modifier = Modifier) {
     OutlinedTextField(
         value = value.toString(),
         onValueChange = { onValueChange(it.toIntOrNull() ?: 0) },
@@ -328,8 +383,14 @@ fun PaxInputField(label: String, value: Int, onValueChange: (Int) -> Unit, modif
 
 
 
-data class TransferData(val title: String, val location: String, val price: Int, val availableSeats: Int) {
-}
+// Transfer Data Model
+data class TransferData(
+    val title: String,
+    val location: String,
+    val totalSeats: Int,
+    val availableSeats: Int,
+    val reservedSeats: Int
+)
 
 data class Passenger(val name: String, val age: String)
 
