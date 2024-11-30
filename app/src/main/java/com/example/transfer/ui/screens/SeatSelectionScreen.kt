@@ -1,20 +1,19 @@
 package com.example.transfer.ui.screens
 
 import android.content.Context
-import android.content.SharedPreferences
+
 import android.util.Log
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext // Import necesario
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -28,22 +27,38 @@ import kotlin.random.Random
 @Composable
 fun SeatSelectionScreen(
     navController: NavController,
-    tripTitle: String,
-    zone: String,
-    totalSeats: Int,
-    context: Context,
     viewModel: ReservationViewModel
 ) {
-    val sharedPreferences = context.getSharedPreferences("seat_prefs", Context.MODE_PRIVATE)
-    val specialSeats = listOf("A1", "A2") // Asientos especiales: conductor y copiloto
+    val context = LocalContext.current
+    val sharedPreferences = context.getSharedPreferences("ReservationPrefs", Context.MODE_PRIVATE)
 
-    // Cargar estados iniciales de los asientos desde el ViewModel o SharedPreferences
-    var seatAssignments by remember {
-        mutableStateOf(viewModel.getSeatStates(tripTitle, sharedPreferences) ?: loadSeatStates(sharedPreferences))
+    // Recuperar la reserva actual desde el ViewModel
+    val reservation = viewModel.currentReservation
+
+    if (reservation == null) {
+        // Si no hay reserva actual, regresar a HomeScreen
+        navController.popBackStack("home", inclusive = false)
+        return
     }
 
-    // Estado local para contar los asientos seleccionados
-    var reservedSeats by remember { mutableStateOf(seatAssignments.count { it.value.startsWith("Seleccionado") }) }
+    val tripTitle = reservation.model
+    val zone = reservation.zone
+    val totalSeats = reservation.totalSeats
+    val specialSeats = listOf("A1", "A2") // Asientos especiales: conductor y copiloto
+
+    // Cargar estados iniciales de los asientos desde el ViewModel
+    val seatAssignments = remember {
+        mutableStateMapOf<String, String>().apply {
+            putAll(viewModel.getSeatStates(tripTitle, zone, sharedPreferences))
+        }
+    }
+
+    // Estado derivado para contar los asientos seleccionados
+    val selectedSeatsCount by remember {
+        derivedStateOf {
+            seatAssignments.values.count { it == "Seleccionado" }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -92,40 +107,53 @@ fun SeatSelectionScreen(
                 specialSeats = specialSeats,
                 seatAssignments = seatAssignments,
                 onSeatConfirm = {
-                    val referenceCode = generateReferenceCode()
-                    seatAssignments.forEach { (seatId, state) ->
-                        if (state.startsWith("Seleccionado")) {
-                            seatAssignments[seatId] = "Ocupado-$referenceCode"
-                        }
+                    val selectedSeats = seatAssignments.filter { it.value == "Seleccionado" }.keys.toList()
+                    if (selectedSeats.isEmpty()) {
+                        // Mostrar mensaje de error si no se seleccionaron asientos
+                        Log.e("SeatSelectionScreen", "No se han seleccionado asientos.")
+                        return@SeatSelection
                     }
+
+                    val referenceCode = generateReferenceCode()
+
+                    // Actualizar los estados de los asientos
+                    selectedSeats.forEach { seatId ->
+                        seatAssignments[seatId] = "Ocupado-$referenceCode"
+                    }
+
                     // Actualiza los estados y sincroniza con SharedPreferences
-                    viewModel.updateSeatStates(tripTitle, seatAssignments, sharedPreferences)
-                    navController.popBackStack() // Volver a la pantalla anterior
+                    viewModel.updateSeatStates(tripTitle, zone, seatAssignments, sharedPreferences)
+
+                    // Actualizar la reserva con el ID y los asientos seleccionados
+                    val updatedReservation = reservation.copy(
+                        id = referenceCode,
+                        seats = selectedSeats,
+                        reservedSeats = reservation.reservedSeats + selectedSeats.size,
+                        availableSeats = reservation.totalSeats - (reservation.reservedSeats + selectedSeats.size),
+                        seatStates = seatAssignments
+                    )
+
+                    // Añadir la reserva confirmada al ViewModel
+                    viewModel.addConfirmedReservation(updatedReservation)
+                    // Establecer la reserva actual como la actualizada
+                    viewModel.currentReservation = updatedReservation
+
+                    // Navegar a la pantalla de resumen de reserva
+                    navController.navigate("reservation_summary")
                 },
-                onSeatStateChange = { seatId, newState ->
-                    seatAssignments[seatId] = newState
-                    reservedSeats = seatAssignments.values.count { it.startsWith("Seleccionado") }
-                    viewModel.updateSeatStates(tripTitle, seatAssignments, sharedPreferences)
-                },
-                reservedSeats = reservedSeats,
+                reservedSeats = selectedSeatsCount,
                 totalSeats = totalSeats,
                 modifier = Modifier.padding(16.dp)
             )
-
-
-
         }
     }
 }
-
-
 
 @Composable
 fun SeatSelection(
     specialSeats: List<String>,
     seatAssignments: MutableMap<String, String>,
     onSeatConfirm: () -> Unit,
-    onSeatStateChange: (String, String) -> Unit,
     reservedSeats: Int,
     totalSeats: Int,
     modifier: Modifier = Modifier
@@ -151,24 +179,21 @@ fun SeatSelection(
                     if (seatId.isEmpty()) {
                         Spacer(modifier = Modifier.width(32.dp)) // Espaciador para el pasillo
                     } else {
-                        val seatState = seatAssignments[seatId] ?: "Disponible"
-                        val referenceCode = seatState.split("-").getOrNull(1)
+                        val seatState = seatAssignments[seatId]?.split("-")?.first() ?: "Disponible"
+                        val referenceCode = seatAssignments[seatId]?.split("-")?.getOrNull(1)
                         SeatWithImage(
                             seatId = seatId,
-                            seatState = seatState.split("-")[0],
+                            seatState = seatState,
                             referenceCode = referenceCode,
                             isSpecial = seatId in specialSeats,
                             onSeatSelected = {
-                                val currentState = seatAssignments[seatId]?.split("-")?.get(0)
-                                if (currentState == "Disponible") {
+                                if (seatState == "Disponible") {
                                     seatAssignments[seatId] = "Seleccionado"
-                                } else if (currentState == "Seleccionado") {
+                                } else if (seatState == "Seleccionado") {
                                     seatAssignments[seatId] = "Disponible"
                                 }
-                                onSeatStateChange(seatId, seatAssignments[seatId] ?: "Disponible")
                             }
                         )
-
                     }
                 }
             }
@@ -178,7 +203,7 @@ fun SeatSelection(
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = "Seleccionados: $reservedSeats/$totalSeats",
+            text = "Seleccionados: $reservedSeats",
             style = MaterialTheme.typography.bodyLarge,
             modifier = Modifier.padding(8.dp)
         )
@@ -192,8 +217,6 @@ fun SeatSelection(
     }
 }
 
-
-
 @Composable
 fun SeatWithImage(
     seatId: String,
@@ -205,7 +228,7 @@ fun SeatWithImage(
     val iconRes = when {
         isSpecial -> R.drawable.conductor
         seatState == "Disponible" -> R.drawable.disponible
-        seatState == "Ocupado" -> R.drawable.reservado
+        seatState.startsWith("Ocupado") -> R.drawable.reservado
         seatState == "Seleccionado" -> R.drawable.seleccionado
         else -> R.drawable.disponible
     }
@@ -214,7 +237,9 @@ fun SeatWithImage(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .size(70.dp)
-            .clickable(enabled = !isSpecial && (seatState == "Disponible" || seatState == "Seleccionado")) {
+            .clickable(
+                enabled = !isSpecial && (seatState == "Disponible" || seatState == "Seleccionado")
+            ) {
                 onSeatSelected()
             }
     ) {
@@ -260,27 +285,7 @@ fun StatusIndicator(label: String, iconRes: Int) {
     }
 }
 
-// Funciones auxiliares para guardar y cargar estados
-fun saveSeatStates(sharedPreferences: SharedPreferences, seatAssignments: MutableMap<String, String>) {
-    sharedPreferences.edit().apply {
-        seatAssignments.forEach { (seatId, state) ->
-            putString(seatId, state)
-        }
-        apply()
-    }
-}
-
-fun loadSeatStates(sharedPreferences: SharedPreferences): MutableMap<String, String> {
-    val seatStates = mutableMapOf<String, String>()
-    for (row in 'A'..'E') {
-        for (col in 1..4) {
-            val seatId = "$row$col"
-            seatStates[seatId] = sharedPreferences.getString(seatId, "Disponible") ?: "Disponible"
-        }
-    }
-    return seatStates
-}
-
+// Función auxiliar para generar código de referencia
 fun generateReferenceCode(): String {
     return Random.nextInt(1000, 9999).toString()
 }

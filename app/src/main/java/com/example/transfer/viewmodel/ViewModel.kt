@@ -3,8 +3,9 @@ package com.example.transfer.viewmodel
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.*
 import androidx.lifecycle.ViewModel
+import com.example.transfer.data.model.Reservation
 
 class ReservationViewModel : ViewModel() {
     private val preferencesKeyReservedSeats = "reserved_seats_"
@@ -15,8 +16,18 @@ class ReservationViewModel : ViewModel() {
     // Lista observable para que Compose detecte los cambios
     val reservations = mutableStateListOf<Reservation>()
 
+    // Reserva actual en proceso
+    var currentReservation by mutableStateOf<Reservation?>(null)
+
+    // Lista de reservas confirmadas
+    val confirmedReservations = mutableStateListOf<Reservation>()
+
+    // Propiedad para indicar si la reserva ha sido finalizada
+    var reservationFinalized by mutableStateOf(false)
+        private set
+
     // Inicializar reservas desde SharedPreferences o valores predeterminados
-    fun initializeReservations(context: Context, defaultSeats: Int = 16) {
+    fun initializeReservations(context: Context) {
         val sharedPreferences = context.getSharedPreferences("ReservationPrefs", Context.MODE_PRIVATE)
 
         // Verificar si ya están inicializadas las reservas
@@ -25,18 +36,25 @@ class ReservationViewModel : ViewModel() {
         if (!isInitialized) {
             // Modelos y zonas para inicializar
             val models = listOf("Van", "Transit", "Rifter")
-            val zones = listOf("Cancún", "Puerto Morelos", "Rivera Maya")
+            val zones = listOf("Cancún", "Puerto Morelos", "Riviera Maya")
 
             val defaultReservations = mutableListOf<Reservation>()
             models.forEach { model ->
                 zones.forEach { zone ->
+                    val totalSeats = when (model) {
+                        "Van" -> 15
+                        "Transit" -> 12
+                        "Rifter" -> 10
+                        else -> 0
+                    }
                     defaultReservations.add(
                         Reservation(
-                            title = model,
                             zone = zone,
-                            totalSeats = defaultSeats,
+                            model = model,
+                            totalSeats = totalSeats,
                             reservedSeats = 0,
-                            availableSeats = defaultSeats
+                            availableSeats = totalSeats,
+                            seatStates = mutableMapOf()
                         )
                     )
                 }
@@ -53,14 +71,16 @@ class ReservationViewModel : ViewModel() {
         }
     }
 
-
-
     // Guardar todas las reservas en SharedPreferences
     private fun saveAllReservationsToPreferences(sharedPreferences: SharedPreferences) {
         val editor = sharedPreferences.edit()
         reservations.forEach { reservation ->
-            editor.putInt(preferencesKeyReservedSeats + reservation.title, reservation.reservedSeats)
-            editor.putInt(preferencesKeyAvailableSeats + reservation.title, reservation.availableSeats)
+            val keySuffix = "${reservation.model}_${reservation.zone}"
+            editor.putInt("$preferencesKeyReservedSeats$keySuffix", reservation.reservedSeats)
+            editor.putInt("$preferencesKeyAvailableSeats$keySuffix", reservation.availableSeats)
+            // Guardar estados de los asientos serializados
+            val serializedSeatStates = serializeSeatStates(reservation.seatStates)
+            editor.putString("$preferencesKeySeatStates$keySuffix", serializedSeatStates)
         }
         editor.apply()
         Log.d("ReservationViewModel", "Reservas guardadas correctamente en SharedPreferences")
@@ -70,27 +90,30 @@ class ReservationViewModel : ViewModel() {
     fun loadReservationsFromPreferences(sharedPreferences: SharedPreferences) {
         reservations.clear()
         val models = listOf("Van", "Transit", "Rifter")
-        val zones = listOf("Cancún", "Puerto Morelos", "Rivera Maya")
+        val zones = listOf("Cancún", "Puerto Morelos", "Riviera Maya")
 
         models.forEach { model ->
             zones.forEach { zone ->
-                val reservedSeats = sharedPreferences.getInt("$preferencesKeyReservedSeats$model$zone", 0)
+                val keySuffix = "${model}_${zone}"
+                val reservedSeats = sharedPreferences.getInt("$preferencesKeyReservedSeats$keySuffix", 0)
                 val totalSeats = when (model) {
                     "Van" -> 15
                     "Transit" -> 12
                     "Rifter" -> 10
                     else -> 0
                 }
-                val availableSeats = totalSeats - reservedSeats
+                val availableSeats = sharedPreferences.getInt("$preferencesKeyAvailableSeats$keySuffix", totalSeats - reservedSeats)
+
+                val seatStates = getSeatStates(model, zone, sharedPreferences)
 
                 reservations.add(
                     Reservation(
-                        title = model,
                         zone = zone,
+                        model = model,
                         totalSeats = totalSeats,
                         reservedSeats = reservedSeats,
                         availableSeats = availableSeats,
-                        seatStates = getSeatStates("$model$zone", sharedPreferences)
+                        seatStates = seatStates
                     )
                 )
             }
@@ -98,12 +121,10 @@ class ReservationViewModel : ViewModel() {
         Log.d("ReservationViewModel", "Reservas cargadas correctamente: $reservations")
     }
 
-
-
     // Actualizar una reserva específica
-    fun updateReservation(context: Context, title: String, zone: String, reservedSeats: Int) {
+    fun updateReservation(context: Context, model: String, zone: String, reservedSeats: Int) {
         val sharedPreferences = context.getSharedPreferences("ReservationPrefs", Context.MODE_PRIVATE)
-        val index = reservations.indexOfFirst { it.title == title && it.zone == zone }
+        val index = reservations.indexOfFirst { it.model == model && it.zone == zone }
 
         if (index >= 0) {
             val totalSeats = reservations[index].totalSeats
@@ -114,41 +135,43 @@ class ReservationViewModel : ViewModel() {
             saveReservationToPreferences(sharedPreferences, reservations[index])
             Log.d("ReservationViewModel", "Reserva actualizada: ${reservations[index]}")
         } else {
-            Log.e("ReservationViewModel", "No se encontró reserva para $title en $zone")
+            Log.e("ReservationViewModel", "No se encontró reserva para $model en $zone")
         }
     }
-
 
     // Guardar una reserva específica en SharedPreferences
     private fun saveReservationToPreferences(sharedPreferences: SharedPreferences, reservation: Reservation) {
         val editor = sharedPreferences.edit()
-        editor.putInt(preferencesKeyReservedSeats + reservation.title, reservation.reservedSeats)
-        editor.putInt(preferencesKeyAvailableSeats + reservation.title, reservation.availableSeats)
+        val keySuffix = "${reservation.model}_${reservation.zone}"
+        editor.putInt("$preferencesKeyReservedSeats$keySuffix", reservation.reservedSeats)
+        editor.putInt("$preferencesKeyAvailableSeats$keySuffix", reservation.availableSeats)
+        // Guardar estados de los asientos serializados
+        val serializedSeatStates = serializeSeatStates(reservation.seatStates)
+        editor.putString("$preferencesKeySeatStates$keySuffix", serializedSeatStates)
         editor.apply()
     }
 
     // Obtener estados de los asientos desde SharedPreferences
-    fun getSeatStates(tripTitle: String, sharedPreferences: SharedPreferences): MutableMap<String, String> {
-        val seatStates = mutableMapOf<String, String>()
-        for (row in 'A'..'E') {
-            for (col in 1..4) {
-                val seatId = "$row$col"
-                seatStates[seatId] = sharedPreferences.getString("$preferencesKeySeatStates$tripTitle$seatId", "Disponible")
-                    ?: "Disponible"
-            }
+    fun getSeatStates(model: String, zone: String, sharedPreferences: SharedPreferences): MutableMap<String, String> {
+        val keySuffix = "${model}_${zone}"
+        val serializedSeatStates = sharedPreferences.getString("$preferencesKeySeatStates$keySuffix", null)
+        return if (serializedSeatStates != null) {
+            deserializeSeatStates(serializedSeatStates)
+        } else {
+            mutableMapOf()
         }
-        return seatStates
     }
 
     // Actualizar los estados de los asientos
-    fun updateSeatStates(tripTitle: String, seatAssignments: MutableMap<String, String>, sharedPreferences: SharedPreferences) {
+    fun updateSeatStates(model: String, zone: String, seatAssignments: MutableMap<String, String>, sharedPreferences: SharedPreferences) {
         val reservedSeatsCount = seatAssignments.values.count { it.startsWith("Ocupado") }
 
-        val index = reservations.indexOfFirst { it.title == tripTitle }
+        val index = reservations.indexOfFirst { it.model == model && it.zone == zone }
         if (index >= 0) {
+            val totalSeats = reservations[index].totalSeats
             reservations[index] = reservations[index].copy(
                 reservedSeats = reservedSeatsCount,
-                availableSeats = reservations[index].totalSeats - reservedSeatsCount,
+                availableSeats = totalSeats - reservedSeatsCount,
                 seatStates = seatAssignments
             )
             saveReservationToPreferences(sharedPreferences, reservations[index])
@@ -156,23 +179,52 @@ class ReservationViewModel : ViewModel() {
         }
     }
 
+    // Serializar estados de los asientos sin Gson
+    private fun serializeSeatStates(seatStates: MutableMap<String, String>): String {
+        return seatStates.entries.joinToString(";") { "${it.key},${it.value}" }
+    }
+
+    // Deserializar estados de los asientos sin Gson
+    private fun deserializeSeatStates(serializedSeatStates: String): MutableMap<String, String> {
+        val seatStates = mutableMapOf<String, String>()
+        if (serializedSeatStates.isNotEmpty()) {
+            val entries = serializedSeatStates.split(";")
+            entries.forEach { entry ->
+                val parts = entry.split(",")
+                if (parts.size == 2) {
+                    val key = parts[0]
+                    val value = parts[1]
+                    seatStates[key] = value
+                }
+            }
+        }
+        return seatStates
+    }
+
     // Obtener asientos disponibles
-    fun getAvailableSeats(title: String, zone: String): Int {
-        return reservations.find { it.title == title && it.zone == zone }?.availableSeats ?: 0
+    fun getAvailableSeats(model: String, zone: String): Int {
+        return reservations.find { it.model == model && it.zone == zone }?.availableSeats ?: 0
     }
 
     // Obtener asientos reservados
-    fun getReservedSeats(title: String, zone: String): Int {
-        return reservations.find { it.title == title && it.zone == zone }?.reservedSeats ?: 0
+    fun getReservedSeats(model: String, zone: String): Int {
+        return reservations.find { it.model == model && it.zone == zone }?.reservedSeats ?: 0
+    }
+
+    // Agregar una reserva confirmada
+    fun addConfirmedReservation(reservation: Reservation) {
+        confirmedReservations.add(reservation)
+        // Aquí puedes guardar la reserva en SharedPreferences o en una base de datos si lo deseas
+        Log.d("ReservationViewModel", "Reserva confirmada añadida: $reservation")
+    }
+
+    // Función para finalizar la reserva
+    fun finalizeReservation() {
+        reservationFinalized = true
+    }
+
+    // Función para resetear el estado de finalización de la reserva
+    fun resetReservationFinalized() {
+        reservationFinalized = false
     }
 }
-
-// Modelo de datos para una reserva
-data class Reservation(
-    val title: String,
-    val zone: String,
-    val totalSeats: Int,
-    val reservedSeats: Int,
-    val availableSeats: Int,
-    val seatStates: MutableMap<String, String> = mutableMapOf()
-)
